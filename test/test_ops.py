@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 
 import torch
-from functools import lru_cache
+from functools import lru_cache, partial
 from torch import Tensor
 from torch.autograd import gradcheck
 from torch.nn.modules.utils import _pair
@@ -64,12 +64,13 @@ class RoIOpTester(ABC):
         gradcheck(func, (x,))
         gradcheck(script_func, (x,))
 
-    @needs_cuda
+    @pytest.mark.parametrize('device', cpu_and_gpu())
     @pytest.mark.parametrize('x_dtype', (torch.float, torch.half))
     @pytest.mark.parametrize('rois_dtype', (torch.float, torch.half))
-    def test_autocast(self, x_dtype, rois_dtype):
-        with torch.cuda.amp.autocast():
-            self.test_forward(torch.device("cuda"), contiguous=False, x_dtype=x_dtype, rois_dtype=rois_dtype)
+    def test_autocast(self, device, x_dtype, rois_dtype):
+        cm = torch.cpu.amp.autocast if device == 'cpu' else torch.cuda.amp.autocast
+        with cm():
+            self.test_forward(torch.device(device), contiguous=False, x_dtype=x_dtype, rois_dtype=rois_dtype)
 
     def _helper_boxes_shape(self, func):
         # test boxes as Tensor[N, 5]
@@ -269,13 +270,14 @@ class TestRoIAlign(RoIOpTester):
         super().test_forward(device=device, contiguous=contiguous, x_dtype=x_dtype, rois_dtype=rois_dtype,
                              aligned=aligned)
 
-    @needs_cuda
+    @pytest.mark.parametrize('device', cpu_and_gpu())
     @pytest.mark.parametrize('aligned', (True, False))
     @pytest.mark.parametrize('x_dtype', (torch.float, torch.half))
     @pytest.mark.parametrize('rois_dtype', (torch.float, torch.half))
-    def test_autocast(self, aligned, x_dtype, rois_dtype):
-        with torch.cuda.amp.autocast():
-            self.test_forward(torch.device("cuda"), contiguous=False, aligned=aligned, x_dtype=x_dtype,
+    def test_autocast(self, device, aligned, x_dtype, rois_dtype):
+        cm = torch.cpu.amp.autocast if device == 'cpu' else torch.cuda.amp.autocast
+        with cm():
+            self.test_forward(torch.device(device), contiguous=False, aligned=aligned, x_dtype=x_dtype,
                               rois_dtype=rois_dtype)
 
     def _make_rois(self, img_size, num_imgs, dtype, num_rois=1000):
@@ -514,12 +516,14 @@ class TestNMS:
             is_eq = torch.allclose(scores[r_cpu], scores[r_cuda.cpu()], rtol=tol, atol=tol)
         assert is_eq, err_msg.format(iou)
 
-    @needs_cuda
+    @pytest.mark.parametrize('device', cpu_and_gpu())
     @pytest.mark.parametrize("iou", (.2, .5, .8))
     @pytest.mark.parametrize("dtype", (torch.float, torch.half))
-    def test_autocast(self, iou, dtype):
-        with torch.cuda.amp.autocast():
-            self.test_nms_cuda(iou=iou, dtype=dtype)
+    def test_autocast(self, device, iou, dtype):
+        test_fn = self.test_nms_ref if device == 'cpu' else partial(self.test_nms_cuda, dtype=dtype)
+        cm = torch.cpu.amp.autocast if device == 'cpu' else torch.cuda.amp.autocast
+        with cm():
+            test_fn(iou=iou)
 
     @needs_cuda
     def test_nms_cuda_float16(self):
@@ -767,12 +771,13 @@ class TestDeformConv:
                 res_grads = init_weight.grad.to("cpu")
                 torch.testing.assert_close(true_cpu_grads, res_grads)
 
-    @needs_cuda
+    @pytest.mark.parametrize('device', cpu_and_gpu())
     @pytest.mark.parametrize('batch_sz', (0, 33))
     @pytest.mark.parametrize('dtype', (torch.float, torch.half))
-    def test_autocast(self, batch_sz, dtype):
-        with torch.cuda.amp.autocast():
-            self.test_forward(torch.device("cuda"), contiguous=False, batch_sz=batch_sz, dtype=dtype)
+    def test_autocast(self, device, batch_sz, dtype):
+        cm = torch.cpu.amp.autocast if device == 'cpu' else torch.cuda.amp.autocast
+        with cm():
+            self.test_forward(torch.device(device), contiguous=False, batch_sz=batch_sz, dtype=dtype)
 
     def test_forward_scriptability(self):
         # Non-regression test for https://github.com/pytorch/vision/issues/4078
